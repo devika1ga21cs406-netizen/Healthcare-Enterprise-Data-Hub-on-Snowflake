@@ -1,0 +1,64 @@
+name: Snowflake CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1️⃣ Checkout repository
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    # 2️⃣ Install SnowSQL
+    - name: Install SnowSQL
+      run: |
+        curl -O https://sfc-repo.snowflakecomputing.com/snowsql/bootstrap/1.2/linux_x86_64/snowsql-1.2.31-linux_x86_64.bash
+        bash snowsql-1.2.31-linux_x86_64.bash
+
+    # 3️⃣ Validate & Deploy SQL Files
+    - name: Validate and Deploy SQL Files
+      run: |
+        for file in sql/*.sql; do
+          echo "Processing $file"
+
+          snowsql -a ${{ secrets.SNOWFLAKE_ACCOUNT }} \
+                   -u ${{ secrets.SNOWFLAKE_USER }} \
+                   -p ${{ secrets.SNOWFLAKE_PASSWORD }} \
+                   -r ${{ secrets.SNOWFLAKE_ROLE }} \
+                   -w ${{ secrets.SNOWFLAKE_WAREHOUSE }} \
+                   -d ${{ secrets.SNOWFLAKE_DATABASE }} \
+                   -s ${{ secrets.SNOWFLAKE_SCHEMA }} \
+                   -f $file \
+                   --option exit_on_error=true
+        done
+
+    # 4️⃣ Log Deployment in Snowflake
+    - name: Log Deployment
+      run: |
+        DEPLOY_ID=$(uuidgen)
+        TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+        CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ',')
+
+        snowsql -a ${{ secrets.SNOWFLAKE_ACCOUNT }} \
+                 -u ${{ secrets.SNOWFLAKE_USER }} \
+                 -p ${{ secrets.SNOWFLAKE_PASSWORD }} \
+                 -r ${{ secrets.SNOWFLAKE_ROLE }} \
+                 -w ${{ secrets.SNOWFLAKE_WAREHOUSE }} \
+                 -d DEVOPS_DB \
+                 -s CI_CD \
+                 -q "
+        INSERT INTO DEPLOYMENT_LOG
+        VALUES (
+          '$DEPLOY_ID',
+          '$TIMESTAMP',
+          '${{ github.actor }}',
+          '${{ secrets.SNOWFLAKE_ROLE }}',
+          '$CHANGED_FILES',
+          'SUCCESS'
+        );
+        "
